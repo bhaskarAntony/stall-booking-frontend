@@ -15,7 +15,7 @@ const LoginPage = () => {
   const from = location.state?.from?.pathname || '/dashboard';
 
   useEffect(() => {
-    if (isAuthenticated) navigate(from, { replace: true });
+    if (isAuthenticated) navigate('/', { replace: true });
   }, [isAuthenticated, navigate, from]);
 
   const handleChange = (e) =>
