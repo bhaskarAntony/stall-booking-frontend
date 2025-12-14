@@ -55,15 +55,12 @@ const LoginPage = () => {
         <div className="flex flex-col items-center text-center space-y-2">
           <div className="relative">
             <div className="w-16 h-16 sm:w-18 sm:h-18 rounded-3xl bg-white shadow-md flex items-center justify-center border border-blue-100">
-              <Car className="w-8 h-8 text-blue-600" />
-            </div>
-            <div className="absolute -bottom-2 -right-2 w-8 h-8 rounded-2xl bg-amber-400 flex items-center justify-center shadow-sm">
-              <MapPin className="w-4 h-4 text-white" />
+              <img src="https://www.rsr-tours.com/static/media/logoRSR.520d3b5c1fbc05c845d5.jpg" alt="rsr cabs" className="w-full rounded-xl" />
             </div>
           </div>
           <div>
             <h1 className="text-2xl sm:text-3xl font-semibold text-slate-900">
-              RSR Cab App
+              RSR Cabs 
             </h1>
             <p className="mt-1 text-xs sm:text-[13px] text-slate-500">
               Smart employee transportation & live cab tracking
@@ -170,7 +167,7 @@ const LoginPage = () => {
         {/* Footer */}
         <div className="text-center">
           <p className="text-[10px] text-slate-400">
-            © 2024 RSR Tours and Travel · All rights reserved
+            © 2025 RSR Tours and Travel · All rights reserved
           </p>
         </div>
       </div>

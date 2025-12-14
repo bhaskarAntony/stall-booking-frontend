@@ -57,7 +57,7 @@ const HRLayout = ({ children }) => {
             </div>
             <div>
               <p className="text-sm font-semibold text-slate-900">
-                HR Transport
+                HR
               </p>
               <p className="text-[11px] text-slate-500 line-clamp-1">
                 {user?.company?.name || 'Company'}
