@@ -31,7 +31,7 @@ const LoginPage = () => {
     try {
       await login(formData);
       toast.success('Login successful!');
-      navigate(from, { replace: true });
+      navigate('/', { replace: true });
     } catch (error) {
       toast.error(error.response?.data?.message || 'Login failed');
     } finally {
