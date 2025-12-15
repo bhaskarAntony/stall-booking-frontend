@@ -127,7 +127,12 @@ function App() {
                     <EmployeeTrips />
                   </ProtectedRoute>
                 } />
-                <Route path="/employee/tracking/:tripId" element={
+                <Route path="/employee/track/:tripId" element={
+                  <ProtectedRoute allowedRoles={['employee']}>
+                    <EmployeeTracking />
+                  </ProtectedRoute>
+                } />
+                 <Route path="/employee/track" element={
                   <ProtectedRoute allowedRoles={['employee']}>
                     <EmployeeTracking />
                   </ProtectedRoute>

@@ -67,15 +67,15 @@ const EmployeeDashboard = () => {
 
   const handleTrackActiveTrip = () => {
     if (activeTrip?._id) {
-      navigate(`/employee/tracking/${activeTrip._id}`);
+      navigate(`/employee/track/${activeTrip._id}`);
     }
   };
 
   const handleQuickTrack = () => {
     if (activeTrip?._id) {
-      navigate(`/employee/tracking/${activeTrip._id}`);
+      navigate(`/employee/track/${activeTrip._id}`);
     } else if (todayTrips?.length) {
-      navigate(`/employee/tracking/${todayTrips[0]._id}`);
+      navigate(`/employee/track/${todayTrips[0]._id}`);
     }
   };
 

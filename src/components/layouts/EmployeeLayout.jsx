@@ -24,7 +24,7 @@ const EmployeeLayout = ({ children }) => {
   const bottomNavItems = [
     { icon: Home, label: 'Home', path: '/employee/dashboard' },
     { icon: Route, label: 'Trips', path: '/employee/trips' },
-    { icon: MapPin, label: 'Track', path: '/employee/tracking' },
+    { icon: MapPin, label: 'Track', path: '/employee/track' },
     { icon: User, label: 'Profile', path: '/employee/profile' }
   ];
 
