@@ -229,6 +229,7 @@ const LiveTracking = () => {
                     <ArrowLeft className="w-4 h-4 text-slate-700" />
                   </button>
                 )}
+               
                 <div>
                   <p className="text-sm font-semibold text-slate-900">
                     Live Trip Tracking
@@ -402,6 +403,12 @@ const LiveTracking = () => {
                     className="p-2 rounded-full bg-slate-100"
                   >
                     <ArrowLeft className="w-4 h-4 text-slate-700" />
+                  </button>
+                   <button
+                    onClick={() => setViewMode('list')}
+                    className="p-2 px-4 rounded-full bg-orange-100"
+                  >
+                  Map
                   </button>
               {/* Trip header */}
               <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 space-y-2">

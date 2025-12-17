@@ -1,4 +1,4 @@
-// src/main.jsx - FIXED VERSION
+// src/main.jsx - CORRECTED & FINAL VERSION
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App.jsx';
@@ -12,6 +12,7 @@ root.render(
   <StrictMode>
     <LoadScript
       googleMapsApiKey="AIzaSyAlwkR078ja6eYka4GoD98JPkQoCf4jiaE"
+      libraries={['places']}  // ← THIS IS THE MISSING LINE!
       loadingElement={
         <div className="w-screen h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 to-slate-800">
           <div className="text-center text-white animate-pulse">
