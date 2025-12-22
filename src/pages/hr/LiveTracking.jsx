@@ -466,7 +466,7 @@ const geocode = useCallback(
                     <ArrowLeft className="w-4 h-4 text-slate-700" />
                   </button>
                 )}
-                <button
+                {/* <button
                   onClick={() => setMapModal(true)}
                   disabled={!selectedTrip.latestLocation}
                   className={`p-2 px-4 rounded-full ${
@@ -476,7 +476,7 @@ const geocode = useCallback(
                   }`}
                 >
                   Map
-                </button>
+                </button> */}
               </div>
 
               {/* Trip header */}
