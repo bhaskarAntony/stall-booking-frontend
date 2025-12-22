@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Car, Eye, EyeOff, Loader2, MapPin } from 'lucide-react';
+import { Car, Eye, EyeOff, Loader2, MapPin, RefreshCcw } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import toast from 'react-hot-toast';
 
@@ -137,6 +137,14 @@ const LoginPage = () => {
                 'Sign in'
               )}
             </button>
+            <center>
+               <button
+                            onClick={() => window.location.reload()}
+                            className="lg:hidden p-2 text-slate-500 hover:bg-slate-100 rounded-md"
+                          >
+                            <RefreshCcw className="w-5 h-5" />
+                          </button>
+            </center>
           </form>
 
           {/* Sample creds */}

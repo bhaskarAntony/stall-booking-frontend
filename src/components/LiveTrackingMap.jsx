@@ -1,4 +1,4 @@
-// src/components/LiveTrackingMap.jsx - FIXED DOUBLE CLOSE BUTTON BUG
+// src/components/LiveTrackingMap.jsx - CONTINUOUS BEATING CIRCLE ANIMATION
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { GoogleMap, Marker, Polyline, Circle, InfoWindow } from '@react-google-maps/api';
 import { Navigation, ArrowLeft, MapPin, Activity, Car, Phone, Users } from 'lucide-react';
@@ -22,6 +22,7 @@ const LiveTrackingMap = ({ trip, currentLocation, locationHistory = [], onClose 
   const [toastMessage, setToastMessage] = useState(null);
   const [showCurrentInfo, setShowCurrentInfo] = useState(false);
   const [screenSize, setScreenSize] = useState({ width: 0, height: 0 });
+  const rafRef = useRef(null);
 
   // RESPONSIVE SCREEN DETECTION
   useEffect(() => {
@@ -36,36 +37,37 @@ const LiveTrackingMap = ({ trip, currentLocation, locationHistory = [], onClose 
     return () => window.removeEventListener('resize', updateSize);
   }, []);
 
-  // FIXED BEATING CIRCLE ANIMATION
+  // CONTINUOUS BEATING CIRCLE ANIMATION - REPEATS FOREVER
   useEffect(() => {
     if (pulseAnimation) {
-      let startTime = null;
-      let rafId = null;
+      let startTime = performance.now();
       
       const animatePulse = (currentTime) => {
-        if (!startTime) startTime = currentTime;
         const elapsed = currentTime - startTime;
-        const progress = Math.min(elapsed / 1500, 1);
+        const progress = (elapsed / 2000) % 1; // 2s cycle, loops forever
         
-        const phase = progress < 0.7 
-          ? progress * 1.4
-          : 1 - (progress - 0.7) * 3.33;
+        // Smooth beating: 0→1→0.4→0 (heartbeat effect)
+        const phase = progress < 0.6 
+          ? progress * 1.67  // Grow phase
+          : 1 - (progress - 0.6) * 2.5; // Shrink phase
         
         setPulsePhase(phase);
-        
-        if (progress < 1) {
-          rafId = requestAnimationFrame(animatePulse);
-        } else {
-          setPulseAnimation(false);
-          setPulsePhase(0);
-        }
+        rafRef.current = requestAnimationFrame(animatePulse);
       };
       
-      rafId = requestAnimationFrame(animatePulse);
+      rafRef.current = requestAnimationFrame(animatePulse);
       
       return () => {
-        if (rafId) cancelAnimationFrame(rafId);
+        if (rafRef.current) {
+          cancelAnimationFrame(rafRef.current);
+        }
       };
+    } else {
+      setPulsePhase(0);
+      if (rafRef.current) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
     }
   }, [pulseAnimation]);
 
@@ -110,15 +112,15 @@ const LiveTrackingMap = ({ trip, currentLocation, locationHistory = [], onClose 
     }
   }, []);
 
-  // MAIN LIVE UPDATE EFFECT - FIXED tracePath dependency
+  // MAIN LIVE UPDATE EFFECT
   useEffect(() => {
     if (currentLocation?.location?.coordinates) {
       const coords = currentLocation.location.coordinates;
       setCenter(coords);
-      setPulseAnimation(true);
+      setPulseAnimation(true); // Enable continuous animation
       setShowCurrentInfo(true);
       
-      // FIXED: Create new path without depending on previous state
+      // Update trace path
       const newPath = [{ lat: coords.lat, lng: coords.lng }];
       if (tracePath.length > 0) {
         newPath.push(...tracePath.slice(0, 48));
@@ -144,7 +146,6 @@ const LiveTrackingMap = ({ trip, currentLocation, locationHistory = [], onClose 
         eta = etaMin <= 2 ? 'Soon' : `${etaMin}min`;
       }
 
-      // Calculate total distance from new path
       let totalDist = 0;
       if (newPath.length > 1) {
         for (let i = 1; i < newPath.length; i++) {
@@ -163,7 +164,7 @@ const LiveTrackingMap = ({ trip, currentLocation, locationHistory = [], onClose 
         map.setZoom(16);
       }
     }
-  }, [currentLocation, trip, map, geocode]); // Removed tracePath dependency
+  }, [currentLocation, trip, map, geocode, tracePath]);
 
   // STATIC LOCATIONS
   useEffect(() => {
@@ -177,6 +178,15 @@ const LiveTrackingMap = ({ trip, currentLocation, locationHistory = [], onClose 
       geocode(trip.officeLocation.coordinates.lat, trip.officeLocation.coordinates.lng, 'office');
     }
   }, [trip, geocode]);
+
+  // CLEANUP ON UNMOUNT
+  useEffect(() => {
+    return () => {
+      if (rafRef.current) {
+        cancelAnimationFrame(rafRef.current);
+      }
+    };
+  }, []);
 
   const getDistance = (lat1, lng1, lat2, lng2) => {
     const R = 6371e3; 
@@ -203,9 +213,8 @@ const LiveTrackingMap = ({ trip, currentLocation, locationHistory = [], onClose 
     return 'Destination';
   };
 
-  // SMART TOAST POSITIONING - SIMPLIFIED
   const getToastPosition = () => {
-    if (screenSize.width < 640) { // Mobile
+    if (screenSize.width < 640) {
       return {
         bottom: '1rem',
         left: '1rem',
@@ -264,30 +273,30 @@ const LiveTrackingMap = ({ trip, currentLocation, locationHistory = [], onClose 
                 animation={pulseAnimation ? 1 : 2}
               />
 
-              {/* GPS Accuracy Circle */}
+              {/* GPS Accuracy Circle - Continuous Pulse */}
               <Circle
                 center={currentLocation.location.coordinates}
                 radius={stats.accuracy}
                 options={{
                   strokeColor: '#10B981',
-                  strokeOpacity: pulsePhase * 0.8,
+                  strokeOpacity: pulsePhase * 0.9,
                   strokeWeight: 3,
                   fillColor: '#10B981',
-                  fillOpacity: pulsePhase * 0.2,
+                  fillOpacity: pulsePhase * 0.25,
                   clickable: false
                 }}
               />
 
-              {/* BEATING PULSE CIRCLE */}
+              {/* CONTINUOUS BEATING PULSE CIRCLE - 2s INFINITE LOOP */}
               <Circle
                 center={currentLocation.location.coordinates}
-                radius={pulsePhase * 250}
+                radius={pulsePhase * 300} // 0-300m smooth expansion
                 options={{
                   strokeColor: '#10B981',
-                  strokeOpacity: Math.max(0.4, pulsePhase * 0.9),
-                  strokeWeight: 2,
+                  strokeOpacity: Math.max(0.3, pulsePhase * 0.95),
+                  strokeWeight: 2.5,
                   fillColor: '#10B981',
-                  fillOpacity: Math.max(0, pulsePhase * 0.15),
+                  fillOpacity: Math.max(0, pulsePhase * 0.2),
                   clickable: false,
                   zIndex: 1000
                 }}
@@ -306,7 +315,7 @@ const LiveTrackingMap = ({ trip, currentLocation, locationHistory = [], onClose 
                 }}
               />
 
-              {/* Info Window - FIXED z-index conflict */}
+              {/* Info Window */}
               {showCurrentInfo && (
                 <InfoWindow
                   position={currentLocation.location.coordinates}
@@ -361,7 +370,7 @@ const LiveTrackingMap = ({ trip, currentLocation, locationHistory = [], onClose 
           )}
         </GoogleMap>
 
-        {/* Pan Button - z-[100] */}
+        {/* Pan Button */}
         <button 
           onClick={panToCurrent}
           className={`absolute top-2 left-2 z-[100] w-11 h-11 rounded-xl flex items-center justify-center border-2 bg-white/95 backdrop-blur-sm shadow-lg transition-all ${
@@ -373,7 +382,7 @@ const LiveTrackingMap = ({ trip, currentLocation, locationHistory = [], onClose 
           <Navigation className="w-5 h-5 text-slate-700" />
         </button>
 
-        {/* Toast - z-[200] - SIMPLIFIED STYLING */}
+        {/* Toast */}
         {toastMessage && (
           <div 
             className="z-[200] bg-white/98 backdrop-blur-md px-3 py-1.5 rounded-full shadow-2xl border border-emerald-200 text-xs flex items-center gap-1.5 text-emerald-800 font-medium leading-tight animate-pulse"
@@ -389,9 +398,9 @@ const LiveTrackingMap = ({ trip, currentLocation, locationHistory = [], onClose 
         )}
       </div>
 
-      {/* Bottom Panel */}
+      {/* Bottom Panel - Unchanged */}
       <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3 bg-slate-50 border-t border-slate-200">
-        {/* Bottom panel content unchanged */}
+        {/* All bottom panel content same as before */}
         <div className="bg-white border border-slate-200 rounded-xl p-3">
           <div className="flex items-center gap-2 mb-2">
             <MapPin className="w-5 h-5 text-emerald-500" />
@@ -493,7 +502,7 @@ const LiveTrackingMap = ({ trip, currentLocation, locationHistory = [], onClose 
         </div>
       </div>
 
-      {/* SINGLE Close Button - z-[999] - ALWAYS ON TOP */}
+      {/* Close Button */}
       <button 
         onClick={onClose}
         className="absolute top-2 right-2 z-[999] w-11 h-11 bg-white/95 border border-slate-200 rounded-xl flex items-center justify-center hover:bg-slate-50 transition-all backdrop-blur-sm shadow-lg hover:shadow-xl pointer-events-auto"
