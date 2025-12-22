@@ -1,129 +1,137 @@
-// src/components/LiveTrackingMap.jsx - TOAST POPUP ON MAP + NO FLICKER + EXPANDING CIRCLE
+// src/components/LiveTrackingMap.jsx - FIXED DOUBLE CLOSE BUTTON BUG
 import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { GoogleMap, Marker, Polyline, Circle } from '@react-google-maps/api';
+import { GoogleMap, Marker, Polyline, Circle, InfoWindow } from '@react-google-maps/api';
 import { Navigation, ArrowLeft, MapPin, Activity, Car, Phone, Users } from 'lucide-react';
 
 const LiveTrackingMap = ({ trip, currentLocation, locationHistory = [], onClose }) => {
   const [map, setMap] = useState(null);
   const [center, setCenter] = useState({ lat: 12.9716, lng: 77.5946 });
   const [pulseAnimation, setPulseAnimation] = useState(false);
+  const [pulsePhase, setPulsePhase] = useState(0);
   const [tracePath, setTracePath] = useState([]);
   const [stats, setStats] = useState({
     eta: '--', distance: '--', speed: 0, accuracy: 25, direction: 'N',
     lastUpdate: '--', totalDistance: 0
   });
-
   const [addresses, setAddresses] = useState({ 
     current: 'Resolving location...', 
     pickup: 'Resolving...', 
     drop: 'Resolving...', 
     office: 'Resolving...' 
   });
+  const [toastMessage, setToastMessage] = useState(null);
+  const [showCurrentInfo, setShowCurrentInfo] = useState(false);
+  const [screenSize, setScreenSize] = useState({ width: 0, height: 0 });
 
-  const [toastMessage, setToastMessage] = useState(null); // Toast for current address
+  // RESPONSIVE SCREEN DETECTION
+  useEffect(() => {
+    const updateSize = () => {
+      setScreenSize({
+        width: window.innerWidth,
+        height: window.innerHeight
+      });
+    };
+    updateSize();
+    window.addEventListener('resize', updateSize);
+    return () => window.removeEventListener('resize', updateSize);
+  }, []);
 
-  // SAME GEOCODE FUNCTION AS MAIN PAGE
-  const geocode = useCallback(
-    async (lat, lng, key) => {
-      const cacheKey = `addr_${lat.toFixed(6)}_${lng.toFixed(6)}`;
-      const cached = sessionStorage.getItem(cacheKey);
-      if (cached && cached.length > 20 && !cached.includes('+')) {
-        setAddresses((prev) => ({ ...prev, [key]: cached }));
-        return cached;
+  // FIXED BEATING CIRCLE ANIMATION
+  useEffect(() => {
+    if (pulseAnimation) {
+      let startTime = null;
+      let rafId = null;
+      
+      const animatePulse = (currentTime) => {
+        if (!startTime) startTime = currentTime;
+        const elapsed = currentTime - startTime;
+        const progress = Math.min(elapsed / 1500, 1);
+        
+        const phase = progress < 0.7 
+          ? progress * 1.4
+          : 1 - (progress - 0.7) * 3.33;
+        
+        setPulsePhase(phase);
+        
+        if (progress < 1) {
+          rafId = requestAnimationFrame(animatePulse);
+        } else {
+          setPulseAnimation(false);
+          setPulsePhase(0);
+        }
+      };
+      
+      rafId = requestAnimationFrame(animatePulse);
+      
+      return () => {
+        if (rafId) cancelAnimationFrame(rafId);
+      };
+    }
+  }, [pulseAnimation]);
+
+  // GEOCODE FUNCTION
+  const geocode = useCallback(async (lat, lng, key) => {
+    const cacheKey = `addr_${lat.toFixed(6)}_${lng.toFixed(6)}`;
+    const cached = sessionStorage.getItem(cacheKey);
+    if (cached && cached.length > 20 && !cached.includes('+')) {
+      setAddresses((prev) => ({ ...prev, [key]: cached }));
+      return cached;
+    }
+
+    const coords = `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+    setAddresses((prev) => ({ ...prev, [key]: coords }));
+
+    try {
+      const geocoder = new window.google.maps.Geocoder();
+      const response = await new Promise((resolve, reject) => {
+        geocoder.geocode(
+          { location: { lat, lng }, region: 'IN', language: 'en' },
+          (results, status) => status === 'OK' ? resolve(results) : reject(status)
+        );
+      });
+
+      const bestAddress = response
+        ?.map(r => r.formatted_address)
+        ?.filter(a => a && !a.includes('+'))
+        ?.sort((a, b) => b.length - a.length)[0] || coords;
+
+      setAddresses((prev) => ({ ...prev, [key]: bestAddress }));
+      sessionStorage.setItem(cacheKey, bestAddress);
+
+      if (key === 'current') {
+        setToastMessage(bestAddress);
+        setTimeout(() => setToastMessage(null), 3500);
       }
 
-      const coords = `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
-      setAddresses((prev) => ({ ...prev, [key]: coords }));
-
-      try {
-        const geocoder = new window.google.maps.Geocoder();
-        const response = await new Promise((resolve, reject) => {
-          geocoder.geocode(
-            {
-              location: { lat, lng },
-              region: 'IN',
-              language: 'en',
-            },
-            (results, status) => {
-              if (status === 'OK') resolve(results);
-              else reject(status);
-            }
-          );
-        });
-
-        let bestAddress = null;
-        let maxDetailLevel = 0;
-
-        for (const result of response) {
-          const addr = result.formatted_address;
-          const types = result.types || [];
-
-          if (addr && !addr.includes('+')) {
-            let detailScore = 0;
-            if (types.includes('street_address') || types.includes('route')) detailScore += 3;
-            if (types.includes('premise') || types.includes('establishment')) detailScore += 2;
-            if (types.includes('locality') || types.includes('sublocality')) detailScore += 1;
-
-            if (detailScore > maxDetailLevel || (detailScore === maxDetailLevel && addr.length > (bestAddress?.length || 0))) {
-              maxDetailLevel = detailScore;
-              bestAddress = addr;
-            }
-          }
-        }
-
-        if (bestAddress) {
-          const longestAddr = response
-            .map(r => r.formatted_address)
-            .filter(a => a && !a.includes('+'))
-            .sort((a, b) => b.length - a.length)[0] || coords;
-
-          const finalAddr = longestAddr || bestAddress;
-
-          setAddresses((prev) => ({ ...prev, [key]: finalAddr }));
-          sessionStorage.setItem(cacheKey, finalAddr);
-
-          // Show toast popup for current location
-          if (key === 'current') {
-            setToastMessage(finalAddr);
-            setTimeout(() => setToastMessage(null), 4000);
-          }
-
-          return finalAddr;
-        }
-      } catch (err) {
-        console.warn('Geocode failed:', err);
-      }
-
+      return bestAddress;
+    } catch (err) {
+      console.warn('Geocode failed:', err);
       return coords;
-    },
-    []
-  );
+    }
+  }, []);
 
-  // MAIN EFFECT - LIVE UPDATES
+  // MAIN LIVE UPDATE EFFECT - FIXED tracePath dependency
   useEffect(() => {
     if (currentLocation?.location?.coordinates) {
       const coords = currentLocation.location.coordinates;
-
       setCenter(coords);
       setPulseAnimation(true);
-
-      const pulseTimeout = setTimeout(() => setPulseAnimation(false), 1500);
-      setTracePath(prev => [{ lat: coords.lat, lng: coords.lng }, ...prev.slice(0, 19)]);
-
-      // Show coordinates immediately
-      const coordsText = `${coords.lat.toFixed(4)}, ${coords.lng.toFixed(4)}`;
-      setAddresses(prev => ({ ...prev, current: coordsText }));
+      setShowCurrentInfo(true);
+      
+      // FIXED: Create new path without depending on previous state
+      const newPath = [{ lat: coords.lat, lng: coords.lng }];
+      if (tracePath.length > 0) {
+        newPath.push(...tracePath.slice(0, 48));
+      }
+      setTracePath(newPath);
 
       geocode(coords.lat, coords.lng, 'current');
 
-      // Stats calculation
       const speed = Math.round(currentLocation.speed || 0);
       const accuracy = Math.round(currentLocation.location?.accuracy || 25);
       const bearing = currentLocation.location?.bearing || 0;
-
       const directions = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
-      const dirIndex = Math.max(0, Math.min(7, Math.round(bearing / 45)));
-      const direction = directions[dirIndex];
+      const direction = directions[Math.max(0, Math.min(7, Math.round(bearing / 45)))];
 
       const nextStop = trip?.myEntry?.pickupLocation?.coordinates || 
                       (trip?.tripType === 'login' ? trip?.officeLocation?.coordinates : trip?.myEntry?.dropLocation?.coordinates);
@@ -136,10 +144,11 @@ const LiveTrackingMap = ({ trip, currentLocation, locationHistory = [], onClose 
         eta = etaMin <= 2 ? 'Soon' : `${etaMin}min`;
       }
 
+      // Calculate total distance from new path
       let totalDist = 0;
-      if (tracePath.length > 1) {
-        for (let i = 1; i < tracePath.length; i++) {
-          totalDist += getDistance(tracePath[i-1].lat, tracePath[i-1].lng, tracePath[i].lat, tracePath[i].lng);
+      if (newPath.length > 1) {
+        for (let i = 1; i < newPath.length; i++) {
+          totalDist += getDistance(newPath[i-1].lat, newPath[i-1].lng, newPath[i].lat, newPath[i].lng);
         }
       }
 
@@ -150,36 +159,32 @@ const LiveTrackingMap = ({ trip, currentLocation, locationHistory = [], onClose 
       });
 
       if (map) {
-        map.panTo({ lat: coords.lat, lng: coords.lng });
+        map.panTo(coords);
         map.setZoom(16);
       }
-
-      return () => clearTimeout(pulseTimeout);
     }
-  }, [currentLocation, trip, map, tracePath, geocode]);
+  }, [currentLocation, trip, map, geocode]); // Removed tracePath dependency
 
   // STATIC LOCATIONS
   useEffect(() => {
     if (trip?.myEntry?.pickupLocation?.coordinates) {
       geocode(trip.myEntry.pickupLocation.coordinates.lat, trip.myEntry.pickupLocation.coordinates.lng, 'pickup');
     }
-
     if (trip?.myEntry?.dropLocation?.coordinates) {
       geocode(trip.myEntry.dropLocation.coordinates.lat, trip.myEntry.dropLocation.coordinates.lng, 'drop');
     }
-
     if (trip?.tripType === 'login' && trip?.officeLocation?.coordinates) {
       geocode(trip.officeLocation.coordinates.lat, trip.officeLocation.coordinates.lng, 'office');
     }
   }, [trip, geocode]);
 
   const getDistance = (lat1, lng1, lat2, lng2) => {
-    const R = 6371e3;
-    const dLat = (lat2 - lat1) * Math.PI / 180;
-    const dLng = (lng2 - lng1) * Math.PI / 180;
-    const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
-              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
-              Math.sin(dLng/2) * Math.sin(dLng/2);
+    const R = 6371e3; 
+    const φ1 = lat1 * Math.PI/180; 
+    const φ2 = lat2 * Math.PI/180;
+    const Δφ = (lat2-lat1) * Math.PI/180; 
+    const Δλ = (lng2-lng1) * Math.PI/180;
+    const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) + Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ/2) * Math.sin(Δλ/2);
     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
     return R * c;
   };
@@ -198,10 +203,29 @@ const LiveTrackingMap = ({ trip, currentLocation, locationHistory = [], onClose 
     return 'Destination';
   };
 
+  // SMART TOAST POSITIONING - SIMPLIFIED
+  const getToastPosition = () => {
+    if (screenSize.width < 640) { // Mobile
+      return {
+        bottom: '1rem',
+        left: '1rem',
+        right: '1rem',
+        transform: 'none'
+      };
+    }
+    return {
+      bottom: '1rem',
+      left: '50%',
+      transform: 'translateX(-50%)'
+    };
+  };
+
+  const toastPos = getToastPosition();
+
   return (
     <div className="w-full h-full flex flex-col relative overflow-hidden bg-white">
-      {/* Map */}
-      <div className="h-[55vh] relative">
+      {/* RESPONSIVE MAP */}
+      <div className={`relative ${screenSize.width < 640 ? 'h-[50vh]' : 'h-[55vh]'}`}>
         <GoogleMap
           mapContainerStyle={{ width: '100%', height: '100%' }}
           center={center}
@@ -213,109 +237,169 @@ const LiveTrackingMap = ({ trip, currentLocation, locationHistory = [], onClose 
             streetViewControl: false,
             fullscreenControl: false,
             gestureHandling: 'greedy',
-            styles: [{ featureType: 'poi', elementType: 'labels', stylers: [{ visibility: 'off' }] }]
+            styles: [
+              { featureType: 'poi', elementType: 'labels', stylers: [{ visibility: 'off' }] },
+              { featureType: 'transit', elementType: 'labels', stylers: [{ visibility: 'off' }] }
+            ]
           }}
         >
+          {/* Trace Path */}
           {tracePath.length > 1 && (
-            <Polyline path={tracePath} options={{ strokeColor: '#10B981', strokeOpacity: 0.8, strokeWeight: 4, geodesic: true }} />
+            <Polyline 
+              path={tracePath} 
+              options={{ strokeColor: '#10B981', strokeOpacity: 0.8, strokeWeight: 5, geodesic: true }} 
+            />
           )}
 
+          {/* CURRENT LOCATION */}
           {currentLocation?.location?.coordinates && (
             <>
               <Marker
                 position={currentLocation.location.coordinates}
                 icon={{
                   url: 'https://maps.google.com/mapfiles/kml/shapes/truck_red.png',
-                  scaledSize: new window.google.maps.Size(42, 42),
-                  anchor: new window.google.maps.Point(21, 21)
+                  scaledSize: new window.google.maps.Size(44, 44),
+                  anchor: new window.google.maps.Point(22, 22)
                 }}
                 animation={pulseAnimation ? 1 : 2}
-                title={`Driver: ${addresses.current}`}
               />
+
+              {/* GPS Accuracy Circle */}
               <Circle
                 center={currentLocation.location.coordinates}
                 radius={stats.accuracy}
                 options={{
-                  strokeColor: pulseAnimation ? '#10B981' : '#10B981',
-                  strokeOpacity: pulseAnimation ? 0.8 : 0.4,
+                  strokeColor: '#10B981',
+                  strokeOpacity: pulsePhase * 0.8,
                   strokeWeight: 3,
-                  fillColor: pulseAnimation ? '#10B981' : '#10B981',
-                  fillOpacity: pulseAnimation ? 0.25 : 0.1,
+                  fillColor: '#10B981',
+                  fillOpacity: pulsePhase * 0.2,
                   clickable: false
                 }}
               />
-              {/* Expanding Pulse Animation */}
+
+              {/* BEATING PULSE CIRCLE */}
               <Circle
                 center={currentLocation.location.coordinates}
-                radius={pulseAnimation ? 100 : 0}
+                radius={pulsePhase * 250}
                 options={{
                   strokeColor: '#10B981',
-                  strokeOpacity: pulseAnimation ? 0.6 : 0,
+                  strokeOpacity: Math.max(0.4, pulsePhase * 0.9),
                   strokeWeight: 2,
                   fillColor: '#10B981',
-                  fillOpacity: pulseAnimation ? 0.1 : 0,
+                  fillOpacity: Math.max(0, pulsePhase * 0.15),
                   clickable: false,
-                  animation: pulseAnimation ? 'expandPulse 2s infinite' : null
+                  zIndex: 1000
                 }}
               />
+
+              {/* Speed Ring */}
+              <Circle
+                center={currentLocation.location.coordinates}
+                radius={stats.speed * 2.5}
+                options={{
+                  strokeColor: stats.speed > 40 ? '#EF4444' : '#10B981',
+                  strokeOpacity: 0.5,
+                  strokeWeight: 2,
+                  fillOpacity: 0,
+                  clickable: false
+                }}
+              />
+
+              {/* Info Window - FIXED z-index conflict */}
+              {showCurrentInfo && (
+                <InfoWindow
+                  position={currentLocation.location.coordinates}
+                  onCloseClick={() => setShowCurrentInfo(false)}
+                  options={{ 
+                    pixelOffset: new window.google.maps.Size(0, -40),
+                    zIndex: 999 
+                  }}
+                >
+                  <div className="p-2 bg-white rounded-lg shadow-lg border min-w-[160px]">
+                    <div className="flex items-center gap-1 mb-1">
+                      <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
+                      <span className="font-bold text-xs text-slate-900">LIVE</span>
+                    </div>
+                    <div className="text-xs text-slate-700 truncate">{addresses.current}</div>
+                    <div className="text-xs text-slate-600 flex gap-1">
+                      <span>{stats.speed}</span><span>km/h</span>
+                    </div>
+                  </div>
+                </InfoWindow>
+              )}
             </>
           )}
 
+          {/* Other Markers */}
           {trip?.myEntry?.pickupLocation?.coordinates && (
-            <Marker 
-              position={trip.myEntry.pickupLocation.coordinates} 
-              icon={{ url: 'https://maps.google.com/mapfiles/ms/icons/green-dot.png', scaledSize: new window.google.maps.Size(36, 36) }}
-              title={`Pickup: ${addresses.pickup}`}
-            />
+            <Marker position={trip.myEntry.pickupLocation.coordinates} 
+              icon={{ url: 'https://maps.google.com/mapfiles/ms/icons/green-dot.png', scaledSize: new window.google.maps.Size(36, 36) }} />
+          )}
+          {trip?.tripType === 'login' && trip?.officeLocation?.coordinates && (
+            <Marker position={trip.officeLocation.coordinates} 
+              icon={{ url: 'https://maps.google.com/mapfiles/ms/icons/yellow-dot.png', scaledSize: new window.google.maps.Size(36, 36) }} />
+          )}
+          {trip?.myEntry?.dropLocation?.coordinates && trip?.tripType !== 'login' && (
+            <Marker position={trip.myEntry.dropLocation.coordinates} 
+              icon={{ url: 'https://maps.google.com/mapfiles/ms/icons/red-dot.png', scaledSize: new window.google.maps.Size(36, 36) }} />
           )}
 
-          {trip?.tripType === 'login' && trip?.officeLocation?.coordinates ? (
-            <Marker 
-              position={trip.officeLocation.coordinates} 
-              icon={{ url: 'https://maps.google.com/mapfiles/ms/icons/yellow-dot.png', scaledSize: new window.google.maps.Size(36, 36) }}
-              title={`Office: ${addresses.office}`}
+          {/* Dashed Route Line */}
+          {currentLocation?.location?.coordinates && 
+           (trip?.myEntry?.pickupLocation?.coordinates || 
+            (trip?.tripType === 'login' ? trip?.officeLocation?.coordinates : trip?.myEntry?.dropLocation?.coordinates)) && (
+            <Polyline
+              path={[currentLocation.location.coordinates, 
+                    trip?.myEntry?.pickupLocation?.coordinates || 
+                    (trip?.tripType === 'login' ? trip?.officeLocation?.coordinates : trip?.myEntry?.dropLocation?.coordinates)]}
+              options={{
+                strokeColor: '#F59E0B', strokeOpacity: 0.7, strokeWeight: 3,
+                strokeDasharray: [8, 4], geodesic: true
+              }}
             />
-          ) : trip?.myEntry?.dropLocation?.coordinates ? (
-            <Marker 
-              position={trip.myEntry.dropLocation.coordinates} 
-              icon={{ url: 'https://maps.google.com/mapfiles/ms/icons/red-dot.png', scaledSize: new window.google.maps.Size(36, 36) }}
-              title={`Dropoff: ${addresses.drop}`}
-            />
-          ) : null}
+          )}
         </GoogleMap>
 
-        <button
+        {/* Pan Button - z-[100] */}
+        <button 
           onClick={panToCurrent}
-          className={`absolute top-4 left-4 z-20 w-12 h-12 rounded-2xl flex items-center justify-center border-2 transition-all bg-white ${
-            pulseAnimation ? 'border-emerald-400 bg-emerald-50' : 'border-slate-200 hover:border-slate-300'
+          className={`absolute top-2 left-2 z-[100] w-11 h-11 rounded-xl flex items-center justify-center border-2 bg-white/95 backdrop-blur-sm shadow-lg transition-all ${
+            pulseAnimation 
+              ? 'border-emerald-400 bg-emerald-50 animate-pulse' 
+              : 'border-slate-200 hover:border-slate-300 hover:shadow-xl'
           }`}
         >
           <Navigation className="w-5 h-5 text-slate-700" />
         </button>
 
-        {/* Toast Popup on Map - White Background, Emerald Text */}
+        {/* Toast - z-[200] - SIMPLIFIED STYLING */}
         {toastMessage && (
-          <div className="absolute bottom-6 left-1/2 transform -translate-x-1/2 bg-white text-emerald-700 px-5 py-3 rounded-full shadow-xl z-50 flex items-center gap-2 animate-fade-in-out border border-emerald-200">
-            <MapPin className="w-5 h-5 text-emerald-600" />
-            <span className="font-medium text-sm truncate max-w-[300px]">{toastMessage}</span>
+          <div 
+            className="z-[200] bg-white/98 backdrop-blur-md px-3 py-1.5 rounded-full shadow-2xl border border-emerald-200 text-xs flex items-center gap-1.5 text-emerald-800 font-medium leading-tight animate-pulse"
+            style={{
+              position: 'absolute',
+              ...toastPos,
+              maxWidth: screenSize.width < 640 ? 'calc(100% - 2rem)' : '280px'
+            }}
+          >
+            <MapPin className="w-3.5 h-3.5 flex-shrink-0" />
+            <span className="truncate">{toastMessage}</span>
           </div>
         )}
       </div>
 
       {/* Bottom Panel */}
       <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3 bg-slate-50 border-t border-slate-200">
+        {/* Bottom panel content unchanged */}
         <div className="bg-white border border-slate-200 rounded-xl p-3">
           <div className="flex items-center gap-2 mb-2">
             <MapPin className="w-5 h-5 text-emerald-500" />
             <h3 className="text-sm font-semibold text-slate-900">Driver Location</h3>
           </div>
-          <div 
-            className={`text-[13px] font-medium text-slate-800 mb-2 max-h-12 overflow-y-auto leading-tight transition-opacity duration-500 ${
-              addresses.current.includes('Resolving') 
-                ? 'animate-pulse opacity-70' 
-                : 'opacity-100'
-            }`}
-          >
+          <div className={`text-[13px] font-medium text-slate-800 mb-2 max-h-12 overflow-y-auto leading-tight transition-opacity duration-500 ${
+            addresses.current.includes('Resolving') ? 'animate-pulse opacity-70' : 'opacity-100'
+          }`}>
             {addresses.current}
           </div>
           <div className="flex items-center justify-between text-[11px] text-slate-500">
@@ -324,23 +408,19 @@ const LiveTrackingMap = ({ trip, currentLocation, locationHistory = [], onClose 
           </div>
         </div>
 
-        {/* Driver & Vehicle */}
         <div className="bg-white border border-slate-200 rounded-xl p-3">
           <div className="flex items-start gap-3 mb-1">
             <div className="w-10 h-10 bg-emerald-500 rounded-lg flex items-center justify-center flex-shrink-0">
               <Car className="w-5 h-5 text-white" />
             </div>
             <div className="flex-1 min-w-0">
-              <p className="font-semibold text-sm text-slate-900 mb-1 truncate">
-                {trip?.assignedDriver?.driverId || 'Driver'}
-              </p>
+              <p className="font-semibold text-sm text-slate-900 mb-1 truncate">{trip?.assignedDriver?.driverId || 'Driver'}</p>
               <p className="text-[12px] text-slate-600">{trip?.assignedVehicle?.brand || ''} {trip?.assignedVehicle?.model || ''}</p>
               <p className="text-[12px] font-medium text-slate-800 mt-0.5">{trip?.assignedVehicle?.vehicleNumber || 'Vehicle'}</p>
             </div>
           </div>
         </div>
 
-        {/* Stats Grid */}
         <div className="grid grid-cols-2 gap-2">
           <div className="bg-white border border-slate-200 rounded-xl p-3 text-center">
             <div className="text-xl font-bold text-slate-900">{stats.speed}</div>
@@ -360,42 +440,31 @@ const LiveTrackingMap = ({ trip, currentLocation, locationHistory = [], onClose 
           </div>
         </div>
 
-        {/* Route Details */}
         <div className="bg-white border border-slate-200 rounded-xl p-3 space-y-2">
           <div className="flex items-center gap-2 text-[12px] font-medium text-slate-900 mb-2">
-            <Activity className="w-4 h-4 text-emerald-500" />
-            Route Details
+            <Activity className="w-4 h-4 text-emerald-500" />Route Details
           </div>
-          
           {trip?.myEntry?.pickupLocation?.coordinates && (
             <div className="flex items-start gap-2 p-2 bg-slate-50 rounded-lg">
               <div className="w-2 h-2 bg-green-500 rounded-full mt-1.5 flex-shrink-0" />
               <div className="flex-1 min-w-0">
                 <div className="font-medium text-[12px] text-slate-900 mb-0.5">Pickup</div>
-                <div className="text-[11px] text-slate-600 max-h-8 overflow-hidden leading-tight">
-                  {addresses.pickup}
-                </div>
+                <div className="text-[11px] text-slate-600 max-h-8 overflow-hidden leading-tight">{addresses.pickup}</div>
               </div>
             </div>
           )}
-
           <div className="flex items-start gap-2 p-2 bg-emerald-50 rounded-lg border border-emerald-200">
             <div className="w-2 h-2 bg-emerald-500 rounded-full mt-1.5 flex-shrink-0 animate-pulse" />
             <div className="flex-1 min-w-0">
               <div className="font-semibold text-[12px] text-emerald-800 mb-0.5">Next Stop ({stats.distance})</div>
-              <div className="text-[11px] text-emerald-700 max-h-8 overflow-hidden leading-tight">
-                {getNextStopAddress()}
-              </div>
+              <div className="text-[11px] text-emerald-700 max-h-8 overflow-hidden leading-tight">{getNextStopAddress()}</div>
             </div>
           </div>
-
           {(trip?.myEntry?.dropLocation?.coordinates || (trip?.tripType === 'login' && trip?.officeLocation?.coordinates)) && (
             <div className="flex items-start gap-2 p-2 bg-slate-50 rounded-lg">
               <div className="w-2 h-2 bg-red-500 rounded-full mt-1.5 flex-shrink-0" />
               <div className="flex-1 min-w-0">
-                <div className="font-medium text-[12px] text-slate-900 mb-0.5">
-                  {trip?.tripType === 'login' ? 'Office' : 'Dropoff'}
-                </div>
+                <div className="font-medium text-[12px] text-slate-900 mb-0.5">{trip?.tripType === 'login' ? 'Office' : 'Dropoff'}</div>
                 <div className="text-[11px] text-slate-600 max-h-8 overflow-hidden leading-tight">
                   {trip?.tripType === 'login' ? addresses.office : addresses.drop}
                 </div>
@@ -411,8 +480,7 @@ const LiveTrackingMap = ({ trip, currentLocation, locationHistory = [], onClose 
 
         <div className="space-y-2 pt-2 border-t border-slate-200">
           <div className="flex items-center gap-2 text-[12px] font-semibold text-slate-900">
-            <Phone className="w-4 h-4 text-red-500" />
-            Emergency Contacts
+            <Phone className="w-4 h-4 text-red-500" />Emergency Contacts
           </div>
           <div className="grid grid-cols-2 gap-2">
             <button className="h-12 border border-slate-200 rounded-xl text-sm font-medium text-slate-900 bg-white hover:bg-slate-50 flex items-center justify-center gap-2 transition-all">
@@ -425,9 +493,10 @@ const LiveTrackingMap = ({ trip, currentLocation, locationHistory = [], onClose 
         </div>
       </div>
 
-      <button
+      {/* SINGLE Close Button - z-[999] - ALWAYS ON TOP */}
+      <button 
         onClick={onClose}
-        className="absolute top-4 right-4 z-50 w-12 h-12 bg-white border border-slate-200 rounded-2xl flex items-center justify-center hover:bg-slate-50 transition-all"
+        className="absolute top-2 right-2 z-[999] w-11 h-11 bg-white/95 border border-slate-200 rounded-xl flex items-center justify-center hover:bg-slate-50 transition-all backdrop-blur-sm shadow-lg hover:shadow-xl pointer-events-auto"
       >
         <ArrowLeft className="w-5 h-5 text-slate-700" />
       </button>

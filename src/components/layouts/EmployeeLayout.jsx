@@ -6,7 +6,8 @@ import {
   MapPin, 
   User,
   Menu,
-  LogOut
+  LogOut,
+  RefreshCcw
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 
@@ -50,9 +51,15 @@ const EmployeeLayout = ({ children }) => {
               {user?.company?.name || 'Tech Solutions Pvt Ltd'}
             </p>
           </div>
-          <div className="w-9 h-9 rounded-full bg-purple-500 text-white flex items-center justify-center text-sm font-semibold">
+          {/* <div className="w-9 h-9 rounded-full bg-purple-500 text-white flex items-center justify-center text-sm font-semibold">
             {user?.name?.charAt(0) || 'E'}
-          </div>
+          </div> */}
+           <button
+                          onClick={() => window.location.reload()}
+                          className="lg:hidden p-2 text-slate-500 hover:bg-slate-100 rounded-md"
+                        >
+                          <RefreshCcw className="w-5 h-5" />
+                        </button>
         </div>
       </header>
 

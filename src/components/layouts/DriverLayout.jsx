@@ -6,7 +6,8 @@ import {
   Map, 
   User,
   Menu,
-  LogOut
+  LogOut,
+  RefreshCcw
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 
@@ -40,11 +41,18 @@ const DriverLayout = ({ children }) => {
             <Menu className="w-6 h-6" />
           </button>
           <h1 className="text-lg font-semibold text-gray-900">RSR Driver</h1>
-          <div className="w-10 h-10 bg-orange-500 rounded-full flex items-center justify-center">
+          {/* <div className="w-10 h-10 bg-orange-500 rounded-full flex items-center justify-center">
             <span className="text-white font-medium">
               {user?.name?.charAt(0)}
             </span>
-          </div>
+          </div> */}
+
+           <button
+                onClick={() => window.location.reload()}
+                className="lg:hidden p-2 text-slate-500 hover:bg-slate-100 rounded-md"
+              >
+                <RefreshCcw className="w-5 h-5" />
+              </button>
         </div>
       </header>
 
