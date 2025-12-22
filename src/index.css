@@ -9,7 +9,7 @@
 }
 
 .animate-expand-pulse {
-  animation: expandPulse 2s infinite ease-in-out;
+  animation: expandPulse 2s infinite ease-in-out infinite;
 }
 
 @keyframes fade-in-out {
