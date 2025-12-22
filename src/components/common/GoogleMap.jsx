@@ -15,7 +15,7 @@ const GoogleMap = ({
   useEffect(() => {
     const initMap = async () => {
       const loader = new Loader({
-        apiKey: import.meta.env.VITE_"AIzaSyAlwkR078ja6eYka4GoD98JPkQoCf4jiaE" || '',
+        apiKey: "AIzaSyAlwkR078ja6eYka4GoD98JPkQoCf4jiaE" ,
         version: 'weekly',
         libraries: ['places', 'geometry']
       });

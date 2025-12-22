@@ -15,6 +15,7 @@ import LoadingSpinner from '../../components/LoadingSpinner';
 import { dashboardAPI, locationAPI } from '../../services/api';
 import { useSocket } from '../../context/SocketContext';
 import toast from 'react-hot-toast';
+import LiveTrackingMap from '../../components/LiveTrackingMap';
 
 const LiveTracking = () => {
   const [liveTrips, setLiveTrips] = useState([]);
@@ -29,28 +30,87 @@ const LiveTracking = () => {
 
   const [isMobile, setIsMobile] = useState(false);
   const [viewMode, setViewMode] = useState('list'); // 'list' | 'detail'
+  const [mapModal, setMapModal] = useState(false);
 
-  const geocode = useCallback(
-    async (lat, lng, key) => {
-      if (addresses[key]) return addresses[key];
+const geocode = useCallback(
+  async (lat, lng, key) => {
+    // Check if we already have a good address
+    if (addresses[key] && addresses[key].length > 20 && !addresses[key].includes('+')) {
+      return addresses[key];
+    }
 
-      try {
-        const geocoder = new window.google.maps.Geocoder();
-        const result = await geocoder.geocode({ location: { lat, lng } });
-        if (result.results[0]) {
-          const addr = result.results[0].formatted_address;
-          setAddresses((prev) => ({ ...prev, [key]: addr }));
-          return addr;
+    // Check cache first (sessionStorage)
+    const cacheKey = `addr_${lat.toFixed(6)}_${lng.toFixed(6)}`;
+    const cached = sessionStorage.getItem(cacheKey);
+    if (cached && cached.length > 20 && !cached.includes('+')) {
+      setAddresses((prev) => ({ ...prev, [key]: cached }));
+      return cached;
+    }
+
+    try {
+      const geocoder = new window.google.maps.Geocoder();
+      const response = await new Promise((resolve, reject) => {
+        geocoder.geocode(
+          {
+            location: { lat, lng },
+            region: 'IN',
+            language: 'en',
+            // Optional: prefer more detailed results
+            // result_type: 'street_address|locality|route',
+          },
+          (results, status) => {
+            if (status === 'OK') resolve(results);
+            else reject(status);
+          }
+        );
+      });
+
+      let bestAddress = null;
+      let maxDetailLevel = 0;
+
+      for (const result of response) {
+        const addr = result.formatted_address;
+        const types = result.types || [];
+
+        // Prioritize detailed addresses
+        if (addr && !addr.includes('+')) {
+          let detailScore = 0;
+          if (types.includes('street_address') || types.includes('route')) detailScore += 3;
+          if (types.includes('premise') || types.includes('establishment')) detailScore += 2;
+          if (types.includes('locality') || types.includes('sublocality')) detailScore += 1;
+
+          if (detailScore > maxDetailLevel || (detailScore === maxDetailLevel && addr.length > (bestAddress?.length || 0))) {
+            maxDetailLevel = detailScore;
+            bestAddress = addr;
+          }
         }
-      } catch (err) {
-        console.warn('Geocode failed:', err);
       }
-      const fallback = `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
-      setAddresses((prev) => ({ ...prev, [key]: fallback }));
-      return fallback;
-    },
-    [addresses]
-  );
+
+      if (bestAddress) {
+        // Sometimes we can get even better by finding the longest valid address
+        const longestAddr = response
+          .map(r => r.formatted_address)
+          .filter(a => a && !a.includes('+'))
+          .sort((a, b) => b.length - a.length)[0];
+
+        const finalAddr = longestAddr || bestAddress;
+
+        setAddresses((prev) => ({ ...prev, [key]: finalAddr }));
+        sessionStorage.setItem(cacheKey, finalAddr); // Cache it
+        return finalAddr;
+      }
+    } catch (err) {
+      console.warn('Geocode failed:', err);
+    }
+
+    // Fallback to coordinates
+    const fallback = `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+    setAddresses((prev) => ({ ...prev, [key]: fallback }));
+    sessionStorage.setItem(cacheKey, fallback);
+    return fallback;
+  },
+  [addresses]
+);
 
   useEffect(() => {
     const handleResize = () => setIsMobile(window.innerWidth < 1024);
@@ -212,12 +272,7 @@ const LiveTracking = () => {
     <HRLayout>
       <div className="h-[calc(100vh-64px)] relative bg-slate-50">
         {/* Top bar + KPIs - always visible */}
-       
-
-        {/* Mobile list view */}
-        {effectiveView === 'list' && (
-          <div className="absolute top-[0px] inset-x-0 bottom-0 z-10 lg:hidden">
-             <div className=" top-0 inset-x-0 z-20 bg-white/90 backdrop-blur border-b border-slate-200">
+        <div className=" top-0 inset-x-0 z-20 bg-white/90 backdrop-blur border-b border-slate-200">
           <div className="max-w-6xl mx-auto px-4 pt-3 pb-2">
             <div className="flex justify-between items-center mb-3">
               <div className="flex items-center gap-2">
@@ -263,6 +318,10 @@ const LiveTracking = () => {
             </div>
           </div>
         </div>
+
+        {/* Mobile list view */}
+        {effectiveView === 'list' && (
+          <div className="absolute top-[0px] inset-x-0 bottom-0 z-10 lg:hidden">
             <div className="h-full bg-white rounded-t-3xl shadow-2xl overflow-y-auto">
               <div className="p-4">
                 <h2 className="font-semibold text-sm mb-3">
@@ -398,18 +457,28 @@ const LiveTracking = () => {
             </div>
           ) : (
             <div className="max-w-4xl mx-auto h-full px-4 pt-4 pb-6 overflow-y-auto space-y-4">
-              <button
+              <div className="flex items-center gap-3">
+                {isMobile && (
+                  <button
                     onClick={() => setViewMode('list')}
                     className="p-2 rounded-full bg-slate-100"
                   >
                     <ArrowLeft className="w-4 h-4 text-slate-700" />
                   </button>
-                   <button
-                    onClick={() => setViewMode('list')}
-                    className="p-2 px-4 rounded-full bg-orange-100"
-                  >
+                )}
+                <button
+                  onClick={() => setMapModal(true)}
+                  disabled={!selectedTrip.latestLocation}
+                  className={`p-2 px-4 rounded-full ${
+                    selectedTrip.latestLocation
+                      ? 'bg-emerald-100 text-emerald-700'
+                      : 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                  }`}
+                >
                   Map
-                  </button>
+                </button>
+              </div>
+
               {/* Trip header */}
               <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 space-y-2">
                 <div className="flex justify-between items-start gap-3">
@@ -469,12 +538,9 @@ const LiveTracking = () => {
                   <p className="text-[11px] font-semibold text-slate-900 mb-1">
                     Current cab location
                   </p>
-                  <p className="text-sm font-medium text-slate-900">
-                    {getAddress(
-                      `current-${selectedTrip._id}`,
-                      selectedTrip.latestLocation?.location?.coordinates
-                    )}
-                  </p>
+                <p className="text-sm font-medium text-slate-900">
+  {addresses[`current-${selectedTrip._id}`] || 'Loading detailed address...'}
+</p>
                   <p className="text-[11px] text-slate-500 mt-1">
                     Speed:{' '}
                     {selectedTrip.latestLocation?.location?.speed || 0} km/h
@@ -731,6 +797,33 @@ const LiveTracking = () => {
                   </div>
                 )}
               </div>
+
+              {/* Floating Map Button */}
+              <button
+                onClick={() => setMapModal(true)}
+                disabled={!selectedTrip.latestLocation}
+                className={`fixed bottom-6 right-6 z-50 w-14 h-14 rounded-full flex items-center justify-center shadow-lg border-2 transition-all ${
+                  selectedTrip.latestLocation
+                    ? 'bg-emerald-600 border-emerald-600 text-white hover:bg-emerald-700'
+                    : 'bg-slate-200 border-slate-300 text-slate-400 cursor-not-allowed'
+                }`}
+              >
+                <Navigation className="w-6 h-6" />
+              </button>
+
+              {/* Fullscreen Map Modal */}
+              {mapModal && selectedTrip.latestLocation && (
+                <div className="fixed inset-0 bg-black/70 z-[1000] flex items-center justify-center p-4">
+                  <div className="w-full h-[90vh] bg-white rounded-2xl overflow-hidden border border-slate-200 relative">
+                    <LiveTrackingMap
+                      trip={selectedTrip}
+                      currentLocation={selectedTrip.latestLocation}
+                      locationHistory={locationHistory}
+                      onClose={() => setMapModal(false)}
+                    />
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>

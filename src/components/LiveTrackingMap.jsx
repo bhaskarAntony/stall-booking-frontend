@@ -1,4 +1,4 @@
-// src/components/LiveTrackingMap.jsx - FIXED GEOCODING + REAL ADDRESSES
+// src/components/LiveTrackingMap.jsx - TOAST POPUP ON MAP + NO FLICKER + EXPANDING CIRCLE
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { GoogleMap, Marker, Polyline, Circle } from '@react-google-maps/api';
 import { Navigation, ArrowLeft, MapPin, Activity, Car, Phone, Users } from 'lucide-react';
@@ -14,98 +14,120 @@ const LiveTrackingMap = ({ trip, currentLocation, locationHistory = [], onClose 
   });
 
   const [addresses, setAddresses] = useState({ 
-    current: 'Loading address...', 
-    pickup: 'Loading address...', 
-    drop: 'Loading address...', 
-    office: 'Loading address...' 
+    current: 'Resolving location...', 
+    pickup: 'Resolving...', 
+    drop: 'Resolving...', 
+    office: 'Resolving...' 
   });
-  
-  const geocodeQueue = useRef([]);
-  const isGeocoding = useRef(false);
 
-  // 🗺️ FIXED GEOCODING - MULTIPLE CALLS SUPPORT
-  const geocodeAddress = useCallback(async (lat, lng, key) => {
-    // Skip if already has real address
-    if (addresses[key] && !addresses[key].includes('Loading') && !addresses[key].match(/^\d+\.\d+,\s*\d+\.\d+$/)) {
-      return;
-    }
+  const [toastMessage, setToastMessage] = useState(null); // Toast for current address
 
-    // Add to queue
-    geocodeQueue.current.push({ lat, lng, key });
-    
-    // Process queue
-    if (!isGeocoding.current) {
-      processGeocodeQueue();
-    }
-  }, [addresses]);
+  // SAME GEOCODE FUNCTION AS MAIN PAGE
+  const geocode = useCallback(
+    async (lat, lng, key) => {
+      const cacheKey = `addr_${lat.toFixed(6)}_${lng.toFixed(6)}`;
+      const cached = sessionStorage.getItem(cacheKey);
+      if (cached && cached.length > 20 && !cached.includes('+')) {
+        setAddresses((prev) => ({ ...prev, [key]: cached }));
+        return cached;
+      }
 
-  const processGeocodeQueue = async () => {
-    isGeocoding.current = true;
-    
-    while (geocodeQueue.current.length > 0) {
-      const { lat, lng, key } = geocodeQueue.current.shift();
-      
-      // Show coordinates immediately as fallback
       const coords = `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
-      setAddresses(prev => ({ ...prev, [key]: coords }));
+      setAddresses((prev) => ({ ...prev, [key]: coords }));
 
       try {
-        if (window.google?.maps?.Geocoder) {
-          const geocoder = new window.google.maps.Geocoder();
-          
-          // Use Promise wrapper for callback-based geocoder
-          const geocodePromise = new Promise((resolve) => {
-            geocoder.geocode({ location: { lat, lng } }, (results, status) => {
-              resolve({ results, status });
-            });
-          });
+        const geocoder = new window.google.maps.Geocoder();
+        const response = await new Promise((resolve, reject) => {
+          geocoder.geocode(
+            {
+              location: { lat, lng },
+              region: 'IN',
+              language: 'en',
+            },
+            (results, status) => {
+              if (status === 'OK') resolve(results);
+              else reject(status);
+            }
+          );
+        });
 
-          const { results, status } = await geocodePromise;
-          
-          if (status === 'OK' && results?.[0]?.formatted_address) {
-            const fullAddress = results[0].formatted_address;
-            setAddresses(prev => ({ ...prev, [key]: fullAddress }));
-            
-            // Cache for future use
-            sessionStorage.setItem(`addr_${lat.toFixed(6)}_${lng.toFixed(6)}`, fullAddress);
+        let bestAddress = null;
+        let maxDetailLevel = 0;
+
+        for (const result of response) {
+          const addr = result.formatted_address;
+          const types = result.types || [];
+
+          if (addr && !addr.includes('+')) {
+            let detailScore = 0;
+            if (types.includes('street_address') || types.includes('route')) detailScore += 3;
+            if (types.includes('premise') || types.includes('establishment')) detailScore += 2;
+            if (types.includes('locality') || types.includes('sublocality')) detailScore += 1;
+
+            if (detailScore > maxDetailLevel || (detailScore === maxDetailLevel && addr.length > (bestAddress?.length || 0))) {
+              maxDetailLevel = detailScore;
+              bestAddress = addr;
+            }
           }
         }
-      } catch (error) {
-        console.warn('Geocoding failed for', key, error);
-      }
-      
-      // Small delay between requests
-      await new Promise(resolve => setTimeout(resolve, 100));
-    }
-    
-    isGeocoding.current = false;
-  };
 
-  // ✅ MAIN EFFECT
+        if (bestAddress) {
+          const longestAddr = response
+            .map(r => r.formatted_address)
+            .filter(a => a && !a.includes('+'))
+            .sort((a, b) => b.length - a.length)[0] || coords;
+
+          const finalAddr = longestAddr || bestAddress;
+
+          setAddresses((prev) => ({ ...prev, [key]: finalAddr }));
+          sessionStorage.setItem(cacheKey, finalAddr);
+
+          // Show toast popup for current location
+          if (key === 'current') {
+            setToastMessage(finalAddr);
+            setTimeout(() => setToastMessage(null), 4000);
+          }
+
+          return finalAddr;
+        }
+      } catch (err) {
+        console.warn('Geocode failed:', err);
+      }
+
+      return coords;
+    },
+    []
+  );
+
+  // MAIN EFFECT - LIVE UPDATES
   useEffect(() => {
     if (currentLocation?.location?.coordinates) {
       const coords = currentLocation.location.coordinates;
-      
+
       setCenter(coords);
       setPulseAnimation(true);
-      
+
       const pulseTimeout = setTimeout(() => setPulseAnimation(false), 1500);
       setTracePath(prev => [{ lat: coords.lat, lng: coords.lng }, ...prev.slice(0, 19)]);
 
-      geocodeAddress(coords.lat, coords.lng, 'current');
+      // Show coordinates immediately
+      const coordsText = `${coords.lat.toFixed(4)}, ${coords.lng.toFixed(4)}`;
+      setAddresses(prev => ({ ...prev, current: coordsText }));
+
+      geocode(coords.lat, coords.lng, 'current');
 
       // Stats calculation
       const speed = Math.round(currentLocation.speed || 0);
       const accuracy = Math.round(currentLocation.location?.accuracy || 25);
       const bearing = currentLocation.location?.bearing || 0;
-      
+
       const directions = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
       const dirIndex = Math.max(0, Math.min(7, Math.round(bearing / 45)));
       const direction = directions[dirIndex];
 
       const nextStop = trip?.myEntry?.pickupLocation?.coordinates || 
                       (trip?.tripType === 'login' ? trip?.officeLocation?.coordinates : trip?.myEntry?.dropLocation?.coordinates);
-      
+
       let distance = '--', eta = '--';
       if (nextStop) {
         const distKm = (getDistance(coords.lat, coords.lng, nextStop.lat, nextStop.lng) / 1000).toFixed(1);
@@ -132,45 +154,24 @@ const LiveTrackingMap = ({ trip, currentLocation, locationHistory = [], onClose 
         map.setZoom(16);
       }
 
-      return () => {
-        clearTimeout(pulseTimeout);
-      };
+      return () => clearTimeout(pulseTimeout);
     }
-  }, [currentLocation, trip, map, tracePath, geocodeAddress]);
+  }, [currentLocation, trip, map, tracePath, geocode]);
 
-  // ✅ STATIC LOCATIONS - ON TRIP CHANGE
+  // STATIC LOCATIONS
   useEffect(() => {
     if (trip?.myEntry?.pickupLocation?.coordinates) {
-      // Check cache first
-      const cacheKey = `addr_${trip.myEntry.pickupLocation.coordinates.lat.toFixed(6)}_${trip.myEntry.pickupLocation.coordinates.lng.toFixed(6)}`;
-      const cached = sessionStorage.getItem(cacheKey);
-      if (cached) {
-        setAddresses(prev => ({ ...prev, pickup: cached }));
-      } else {
-        geocodeAddress(trip.myEntry.pickupLocation.coordinates.lat, trip.myEntry.pickupLocation.coordinates.lng, 'pickup');
-      }
+      geocode(trip.myEntry.pickupLocation.coordinates.lat, trip.myEntry.pickupLocation.coordinates.lng, 'pickup');
     }
-    
+
     if (trip?.myEntry?.dropLocation?.coordinates) {
-      const cacheKey = `addr_${trip.myEntry.dropLocation.coordinates.lat.toFixed(6)}_${trip.myEntry.dropLocation.coordinates.lng.toFixed(6)}`;
-      const cached = sessionStorage.getItem(cacheKey);
-      if (cached) {
-        setAddresses(prev => ({ ...prev, drop: cached }));
-      } else {
-        geocodeAddress(trip.myEntry.dropLocation.coordinates.lat, trip.myEntry.dropLocation.coordinates.lng, 'drop');
-      }
+      geocode(trip.myEntry.dropLocation.coordinates.lat, trip.myEntry.dropLocation.coordinates.lng, 'drop');
     }
-    
+
     if (trip?.tripType === 'login' && trip?.officeLocation?.coordinates) {
-      const cacheKey = `addr_${trip.officeLocation.coordinates.lat.toFixed(6)}_${trip.officeLocation.coordinates.lng.toFixed(6)}`;
-      const cached = sessionStorage.getItem(cacheKey);
-      if (cached) {
-        setAddresses(prev => ({ ...prev, office: cached }));
-      } else {
-        geocodeAddress(trip.officeLocation.coordinates.lat, trip.officeLocation.coordinates.lng, 'office');
-      }
+      geocode(trip.officeLocation.coordinates.lat, trip.officeLocation.coordinates.lng, 'office');
     }
-  }, [trip, geocodeAddress]);
+  }, [trip, geocode]);
 
   const getDistance = (lat1, lng1, lat2, lng2) => {
     const R = 6371e3;
@@ -199,7 +200,7 @@ const LiveTrackingMap = ({ trip, currentLocation, locationHistory = [], onClose 
 
   return (
     <div className="w-full h-full flex flex-col relative overflow-hidden bg-white">
-      {/* 🗺️ TOP HALF - SAME DESIGN */}
+      {/* Map */}
       <div className="h-[55vh] relative">
         <GoogleMap
           mapContainerStyle={{ width: '100%', height: '100%' }}
@@ -233,14 +234,28 @@ const LiveTrackingMap = ({ trip, currentLocation, locationHistory = [], onClose 
               />
               <Circle
                 center={currentLocation.location.coordinates}
-                radius={pulseAnimation ? 90 : stats.accuracy}
+                radius={stats.accuracy}
                 options={{
-                  strokeColor: pulseAnimation ? '#10B981' : '#D1D5DB',
-                  strokeOpacity: pulseAnimation ? 1 : 0.6,
+                  strokeColor: pulseAnimation ? '#10B981' : '#10B981',
+                  strokeOpacity: pulseAnimation ? 0.8 : 0.4,
                   strokeWeight: 3,
-                  fillColor: pulseAnimation ? '#10B981' : '#E5E7EB',
+                  fillColor: pulseAnimation ? '#10B981' : '#10B981',
                   fillOpacity: pulseAnimation ? 0.25 : 0.1,
                   clickable: false
+                }}
+              />
+              {/* Expanding Pulse Animation */}
+              <Circle
+                center={currentLocation.location.coordinates}
+                radius={pulseAnimation ? 100 : 0}
+                options={{
+                  strokeColor: '#10B981',
+                  strokeOpacity: pulseAnimation ? 0.6 : 0,
+                  strokeWeight: 2,
+                  fillColor: '#10B981',
+                  fillOpacity: pulseAnimation ? 0.1 : 0,
+                  clickable: false,
+                  animation: pulseAnimation ? 'expandPulse 2s infinite' : null
                 }}
               />
             </>
@@ -277,16 +292,30 @@ const LiveTrackingMap = ({ trip, currentLocation, locationHistory = [], onClose 
         >
           <Navigation className="w-5 h-5 text-slate-700" />
         </button>
+
+        {/* Toast Popup on Map - White Background, Emerald Text */}
+        {toastMessage && (
+          <div className="absolute bottom-6 left-1/2 transform -translate-x-1/2 bg-white text-emerald-700 px-5 py-3 rounded-full shadow-xl z-50 flex items-center gap-2 animate-fade-in-out border border-emerald-200">
+            <MapPin className="w-5 h-5 text-emerald-600" />
+            <span className="font-medium text-sm truncate max-w-[300px]">{toastMessage}</span>
+          </div>
+        )}
       </div>
 
-      {/* 📊 BOTTOM - SAME PERFECT DESIGN */}
+      {/* Bottom Panel */}
       <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3 bg-slate-50 border-t border-slate-200">
         <div className="bg-white border border-slate-200 rounded-xl p-3">
           <div className="flex items-center gap-2 mb-2">
             <MapPin className="w-5 h-5 text-emerald-500" />
             <h3 className="text-sm font-semibold text-slate-900">Driver Location</h3>
           </div>
-          <div className="text-[13px] font-medium text-slate-800 mb-2 max-h-12 overflow-y-auto leading-tight">
+          <div 
+            className={`text-[13px] font-medium text-slate-800 mb-2 max-h-12 overflow-y-auto leading-tight transition-opacity duration-500 ${
+              addresses.current.includes('Resolving') 
+                ? 'animate-pulse opacity-70' 
+                : 'opacity-100'
+            }`}
+          >
             {addresses.current}
           </div>
           <div className="flex items-center justify-between text-[11px] text-slate-500">
@@ -295,6 +324,7 @@ const LiveTrackingMap = ({ trip, currentLocation, locationHistory = [], onClose 
           </div>
         </div>
 
+        {/* Driver & Vehicle */}
         <div className="bg-white border border-slate-200 rounded-xl p-3">
           <div className="flex items-start gap-3 mb-1">
             <div className="w-10 h-10 bg-emerald-500 rounded-lg flex items-center justify-center flex-shrink-0">
@@ -310,6 +340,7 @@ const LiveTrackingMap = ({ trip, currentLocation, locationHistory = [], onClose 
           </div>
         </div>
 
+        {/* Stats Grid */}
         <div className="grid grid-cols-2 gap-2">
           <div className="bg-white border border-slate-200 rounded-xl p-3 text-center">
             <div className="text-xl font-bold text-slate-900">{stats.speed}</div>
@@ -329,6 +360,7 @@ const LiveTrackingMap = ({ trip, currentLocation, locationHistory = [], onClose 
           </div>
         </div>
 
+        {/* Route Details */}
         <div className="bg-white border border-slate-200 rounded-xl p-3 space-y-2">
           <div className="flex items-center gap-2 text-[12px] font-medium text-slate-900 mb-2">
             <Activity className="w-4 h-4 text-emerald-500" />
@@ -340,7 +372,9 @@ const LiveTrackingMap = ({ trip, currentLocation, locationHistory = [], onClose 
               <div className="w-2 h-2 bg-green-500 rounded-full mt-1.5 flex-shrink-0" />
               <div className="flex-1 min-w-0">
                 <div className="font-medium text-[12px] text-slate-900 mb-0.5">Pickup</div>
-                <div className="text-[11px] text-slate-600 max-h-8 overflow-hidden leading-tight">{addresses.pickup}</div>
+                <div className="text-[11px] text-slate-600 max-h-8 overflow-hidden leading-tight">
+                  {addresses.pickup}
+                </div>
               </div>
             </div>
           )}
@@ -349,7 +383,9 @@ const LiveTrackingMap = ({ trip, currentLocation, locationHistory = [], onClose 
             <div className="w-2 h-2 bg-emerald-500 rounded-full mt-1.5 flex-shrink-0 animate-pulse" />
             <div className="flex-1 min-w-0">
               <div className="font-semibold text-[12px] text-emerald-800 mb-0.5">Next Stop ({stats.distance})</div>
-              <div className="text-[11px] text-emerald-700 max-h-8 overflow-hidden leading-tight">{getNextStopAddress()}</div>
+              <div className="text-[11px] text-emerald-700 max-h-8 overflow-hidden leading-tight">
+                {getNextStopAddress()}
+              </div>
             </div>
           </div>
 
@@ -357,7 +393,9 @@ const LiveTrackingMap = ({ trip, currentLocation, locationHistory = [], onClose 
             <div className="flex items-start gap-2 p-2 bg-slate-50 rounded-lg">
               <div className="w-2 h-2 bg-red-500 rounded-full mt-1.5 flex-shrink-0" />
               <div className="flex-1 min-w-0">
-                <div className="font-medium text-[12px] text-slate-900 mb-0.5">{trip?.tripType === 'login' ? 'Office' : 'Dropoff'}</div>
+                <div className="font-medium text-[12px] text-slate-900 mb-0.5">
+                  {trip?.tripType === 'login' ? 'Office' : 'Dropoff'}
+                </div>
                 <div className="text-[11px] text-slate-600 max-h-8 overflow-hidden leading-tight">
                   {trip?.tripType === 'login' ? addresses.office : addresses.drop}
                 </div>
